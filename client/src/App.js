@@ -3,7 +3,8 @@ import io from "socket.io-client";
 import "./App.css";
 
 const BACKEND_URL = "https://chat-app-aqrr.onrender.com";
-const socket = io(BACKEND_URL);
+
+let socket; // IMPORTANT: do not initialize outside component in production
 
 function App() {
   const [username, setUsername] = useState(localStorage.getItem("username") || "");
@@ -17,6 +18,45 @@ function App() {
   const [darkMode, setDarkMode] = useState(false);
 
   const chatRef = useRef(null);
+
+  // =========================
+  // CONNECT SOCKET (ONLY ONCE)
+  // =========================
+
+  useEffect(() => {
+    socket = io(BACKEND_URL, {
+      transports: ["websocket"],
+      withCredentials: true,
+    });
+
+    socket.on("connect", () => {
+      console.log("✅ Connected:", socket.id);
+    });
+
+    socket.on("connect_error", (err) => {
+      console.log("❌ Connection error:", err.message);
+    });
+
+    socket.on("receive_message", (data) => {
+      setChat((prev) => [...prev, data]);
+    });
+
+    socket.on("update_users", (users) => {
+      setOnlineUsers(users);
+    });
+
+    socket.on("show_typing", (user) => {
+      setTypingUser(user);
+    });
+
+    socket.on("hide_typing", () => {
+      setTypingUser("");
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, []);
 
   // =========================
   // AUTH FUNCTIONS
@@ -66,7 +106,7 @@ function App() {
   };
 
   // =========================
-  // CHAT FUNCTIONS
+  // JOIN ROOM
   // =========================
 
   const joinRoom = async () => {
@@ -81,8 +121,12 @@ function App() {
     setChat(data);
   };
 
+  // =========================
+  // SEND MESSAGE
+  // =========================
+
   const sendMessage = () => {
-    if (!message.trim()) return;
+    if (!message.trim() || !room) return;
 
     const currentUser = localStorage.getItem("username");
 
@@ -96,35 +140,6 @@ function App() {
 
     setMessage("");
   };
-
-  // =========================
-  // SOCKET LISTENERS
-  // =========================
-
-  useEffect(() => {
-    socket.on("receive_message", (data) => {
-      setChat((prev) => [...prev, data]);
-    });
-
-    socket.on("update_users", (users) => {
-      setOnlineUsers(users);
-    });
-
-    socket.on("show_typing", (user) => {
-      setTypingUser(user);
-    });
-
-    socket.on("hide_typing", () => {
-      setTypingUser("");
-    });
-
-    return () => {
-      socket.off("receive_message");
-      socket.off("update_users");
-      socket.off("show_typing");
-      socket.off("hide_typing");
-    };
-  }, []);
 
   // =========================
   // AUTO SCROLL

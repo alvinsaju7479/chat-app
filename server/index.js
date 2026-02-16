@@ -10,117 +10,172 @@ const jwt = require("jsonwebtoken");
 const User = require("./models/User");
 const Message = require("./models/Message");
 
-const JWT_SECRET = process.env.JWT_SECRET;
-
 const app = express();
-app.use(cors({
-  origin: "*",
-}));
+
+/* =============================
+   CORS CONFIG (IMPORTANT)
+============================= */
+
+const FRONTEND_URL =
+  "https://chat-d2imt171z-alvinsaju7479s-projects.vercel.app";
+
+app.use(
+  cors({
+    origin: [FRONTEND_URL, "http://localhost:3000"],
+    methods: ["GET", "POST"],
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("MongoDB Connected"))
-  .catch(err => console.log(err));
+/* =============================
+   MONGODB CONNECTION
+============================= */
 
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => console.log("Mongo Error:", err));
 
+/* =============================
+   SERVER + SOCKET.IO
+============================= */
 
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: [FRONTEND_URL, "http://localhost:3000"],
+    methods: ["GET", "POST"],
+    credentials: true,
   },
 });
-
 
 let onlineUsers = {};
 
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  console.log("🟢 User connected:", socket.id);
 
-  socket.on("join_room", (data) => {
-    socket.join(data.room);
+  socket.on("join_room", ({ username, room }) => {
+    socket.join(room);
 
-    onlineUsers[socket.id] = {
-      username: data.username,
-      room: data.room,
-    };
+    onlineUsers[socket.id] = { username, room };
 
-    const users = Object.values(onlineUsers)
-      .filter(u => u.room === data.room)
-      .map(u => u.username);
+    const usersInRoom = Object.values(onlineUsers)
+      .filter((user) => user.room === room)
+      .map((user) => user.username);
 
-    io.to(data.room).emit("update_users", users);
+    io.to(room).emit("update_users", usersInRoom);
   });
 
-  socket.on("typing", (data) => {
-    socket.to(data.room).emit("show_typing", data.username);
+  socket.on("typing", ({ room, username }) => {
+    socket.to(room).emit("show_typing", username);
   });
 
-  socket.on("stop_typing", (data) => {
-    socket.to(data.room).emit("hide_typing");
+  socket.on("stop_typing", ({ room }) => {
+    socket.to(room).emit("hide_typing");
   });
 
-  socket.on("send_message", async (data) => {
-    const messageData = {
-      ...data,
-      time: new Date().toLocaleTimeString(),
-    };
+  socket.on("send_message", async ({ room, author, message }) => {
+    try {
+      const messageData = {
+        room,
+        author,
+        message,
+        time: new Date().toLocaleTimeString(),
+      };
 
-    await Message.create(messageData);
-    io.to(data.room).emit("receive_message", messageData);
+      await Message.create(messageData);
+
+      io.to(room).emit("receive_message", messageData);
+    } catch (err) {
+      console.log("Message Error:", err);
+    }
   });
 
   socket.on("disconnect", () => {
     const user = onlineUsers[socket.id];
+
     if (user) {
       const room = user.room;
       delete onlineUsers[socket.id];
 
-      const users = Object.values(onlineUsers)
-        .filter(u => u.room === room)
-        .map(u => u.username);
+      const usersInRoom = Object.values(onlineUsers)
+        .filter((u) => u.room === room)
+        .map((u) => u.username);
 
-      io.to(room).emit("update_users", users);
+      io.to(room).emit("update_users", usersInRoom);
     }
+
+    console.log("🔴 User disconnected:", socket.id);
   });
 });
 
+/* =============================
+   AUTH ROUTES
+============================= */
+
 app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
-
-  const hashedPassword = await bcrypt.hash(password, 10);
-
   try {
+    const { username, password } = req.body;
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     await User.create({ username, password: hashedPassword });
+
     res.json({ message: "User created" });
-  } catch {
-    res.status(400).json({ error: "User exists" });
+  } catch (err) {
+    res.status(400).json({ error: "User already exists" });
   }
 });
 
 app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-  const user = await User.findOne({ username });
-  if (!user) return res.status(400).json({ error: "User not found" });
+    const user = await User.findOne({ username });
+    if (!user)
+      return res.status(400).json({ error: "User not found" });
 
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) return res.status(400).json({ error: "Wrong password" });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch)
+      return res.status(400).json({ error: "Wrong password" });
 
-  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "1d" });
+    const token = jwt.sign(
+      { username },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
 
-  res.json({ token, username });
+    res.json({ token, username });
+  } catch (err) {
+    res.status(500).json({ error: "Server error" });
+  }
 });
+
+/* =============================
+   FETCH ROOM MESSAGES
+============================= */
 
 app.get("/messages/:room", async (req, res) => {
-  const messages = await Message.find({ room: req.params.room });
-  res.json(messages);
+  try {
+    const messages = await Message.find({
+      room: req.params.room,
+    });
+
+    res.json(messages);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
 });
 
-server.listen(process.env.PORT || 5000, () => {
-  console.log("Server running");
-});
+/* =============================
+   START SERVER
+============================= */
 
+const PORT = process.env.PORT || 5000;
+
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
