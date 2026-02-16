@@ -4,10 +4,7 @@ const MessageSchema = new mongoose.Schema({
   room: String,
   author: String,
   message: String,
-  time: {
-    type: Date,
-    default: Date.now
-  }
+  time: String,
 });
 
 module.exports = mongoose.model("Message", MessageSchema);

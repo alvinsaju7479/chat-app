@@ -1,14 +1,15 @@
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const User = require("./models/User");
-
-const JWT_SECRET = "supersecretkey";
-
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+
+const User = require("./models/User");
+const Message = require("./models/Message");
+
+const JWT_SECRET = "supersecretkey";
 
 const app = express();
 app.use(cors());
@@ -18,34 +19,32 @@ mongoose.connect("mongodb://127.0.0.1:27017/chatapp")
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
-const Message = require("./models/Message");
-
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
     origin: "http://localhost:3000",
-    methods: ["GET", "POST"]
-  }
+  },
 });
+
 let onlineUsers = {};
 
 io.on("connection", (socket) => {
-  console.log("User Connected:", socket.id);
+  console.log("User connected:", socket.id);
 
   socket.on("join_room", (data) => {
     socket.join(data.room);
 
     onlineUsers[socket.id] = {
       username: data.username,
-      room: data.room
+      room: data.room,
     };
 
-    const usersInRoom = Object.values(onlineUsers)
-      .filter(user => user.room === data.room)
-      .map(user => user.username);
+    const users = Object.values(onlineUsers)
+      .filter(u => u.room === data.room)
+      .map(u => u.username);
 
-    io.to(data.room).emit("update_users", usersInRoom);
+    io.to(data.room).emit("update_users", users);
   });
 
   socket.on("typing", (data) => {
@@ -57,69 +56,60 @@ io.on("connection", (socket) => {
   });
 
   socket.on("send_message", async (data) => {
-    const messageWithTime = {
+    const messageData = {
       ...data,
-      time: new Date().toLocaleTimeString()
+      time: new Date().toLocaleTimeString(),
     };
 
-    await Message.create(messageWithTime);
-
-    io.to(data.room).emit("receive_message", messageWithTime);
+    await Message.create(messageData);
+    io.to(data.room).emit("receive_message", messageData);
   });
 
   socket.on("disconnect", () => {
     const user = onlineUsers[socket.id];
-
     if (user) {
       const room = user.room;
       delete onlineUsers[socket.id];
 
-      const usersInRoom = Object.values(onlineUsers)
-        .filter(user => user.room === room)
-        .map(user => user.username);
+      const users = Object.values(onlineUsers)
+        .filter(u => u.room === room)
+        .map(u => u.username);
 
-      io.to(room).emit("update_users", usersInRoom);
+      io.to(room).emit("update_users", users);
     }
-
-    console.log("User Disconnected:", socket.id);
   });
 });
 
-
-app.get("/messages/:room", async (req, res) => {
-  const messages = await Message.find({ room: req.params.room });
-  res.json(messages);
-});
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
 
   const hashedPassword = await bcrypt.hash(password, 10);
 
   try {
-    const user = await User.create({
-      username,
-      password: hashedPassword,
-    });
-
+    await User.create({ username, password: hashedPassword });
     res.json({ message: "User created" });
-  } catch (err) {
-    res.status(400).json({ error: "User already exists" });
+  } catch {
+    res.status(400).json({ error: "User exists" });
   }
 });
+
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
 
   const user = await User.findOne({ username });
-
   if (!user) return res.status(400).json({ error: "User not found" });
 
   const isMatch = await bcrypt.compare(password, user.password);
-
   if (!isMatch) return res.status(400).json({ error: "Wrong password" });
 
   const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "1d" });
 
   res.json({ token, username });
+});
+
+app.get("/messages/:room", async (req, res) => {
+  const messages = await Message.find({ room: req.params.room });
+  res.json(messages);
 });
 
 server.listen(5000, () => {
