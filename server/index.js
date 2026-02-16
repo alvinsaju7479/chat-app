@@ -13,7 +13,10 @@ const Message = require("./models/Message");
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: "*",
+}));
+
 app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI)
@@ -26,9 +29,11 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: "*",
+    methods: ["GET", "POST"]
   },
 });
+
 
 let onlineUsers = {};
 
